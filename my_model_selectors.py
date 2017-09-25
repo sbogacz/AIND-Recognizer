@@ -1,12 +1,13 @@
 import math
 import statistics
 import warnings
-
+import heapq
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
 from sklearn.model_selection import KFold
 from asl_utils import combine_sequences
 
+import logging
 
 class ModelSelector(object):
     '''
@@ -75,9 +76,29 @@ class SelectorBIC(ModelSelector):
         :return: GaussianHMM object
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        """ nParam: nn + 2n*d-1 
+         where n = number of states
+         d = number of data points
+         from https://discussions.udacity.com/t/bayesian-information-criteria-equation/326887/3
+        """
+        d = sum(self.lengths)
+        calculateNParams = lambda n: n ** 2 + 2 * n * d - 1
+        calculateBIC = lambda L, p: -2 * L + p * np.log(d)
+        scores = []
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                model = self.base_model(n)
+                L = model.score(self.X, self.lengths)
+                p = calculateNParams(n)
+                score = calculateBIC(L,p)
+                heapq.heappush(scores, tuple([score, model]))
+            except:
+                # catch the exception for the illegal transitions
+                pass
+        if not scores:
+            return None
+        # pop from the min heap, and return only the model, not the score
+        return heapq.heappop(scores)[1]
 
 
 class SelectorDIC(ModelSelector):
@@ -89,13 +110,37 @@ class SelectorDIC(ModelSelector):
     https://pdfs.semanticscholar.org/ed3d/7c4a5f607201f3848d4c02dd9ba17c791fc2.pdf
     DIC = log(P(X(i)) - 1/(M-1)SUM(log(P(X(all but i))
     '''
+    def sum_scores(self, model, all_but):
+        scores = [model.score(X, L) for X, L in all_but]
+        return sum(scores)
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        
+        all_but = [self.hwords[word] for word in self.words if word != self.this_word]
+        base_scores = []
+        for n in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                model = self.base_model(n)
+                score = model.score(self.X, self.lengths)
+                base_scores.append(tuple([score, model]))
+            except Exception as e:
+                #logging.exception('DIC exception occurred:', e)
+                pass
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
-
+        scores = []
+        heapq._heapify_max(scores)
+        for score_model in base_scores:
+            try:
+                orig_score, orig_model = score_model[0], score_model[1]
+                score = orig_score - np.mean(self.sum_scores(orig_model, all_but))     
+                heapq.heappush(scores, tuple([score, orig_model]))
+            except Exception as e:
+                # logging.exception('DIC exception occurred:', e)
+                pass
+        if not scores:
+            return None
+        return heapq.heappop(scores)[1]
 
 class SelectorCV(ModelSelector):
     ''' select best model based on average log Likelihood of cross-validation folds
@@ -104,6 +149,39 @@ class SelectorCV(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+                
+        kf = KFold(n_splits = 3, shuffle = False, random_state = None)
+        likelihoods = []
+        scores = []
+        heapq._heapify_max(scores)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        for n_states in range(self.min_n_components, self.max_n_components + 1):
+            try:        
+                # Check sufficient data to split using KFold
+                if len(self.sequences) < 3:
+                    model = self.base_model(n_states)
+                    likelihoods.append(model.score(self.X, self.lengths))
+                else:
+                    # loop through the splits and keep track of the likelihoods
+                    for train_idx, test_idx in kf.split(self.sequences):
+                        # Training sequences split using KFold are recombined
+                        self.X, self.lengths = combine_sequences(train_idx, self.sequences)
+
+                        # Test sequences split using KFold are recombined
+                        X_test, lengths_test = combine_sequences(test_idx, self.sequences)
+
+                        model = self.base_model(n_states)
+                        likelihood = model.score(X_test, lengths_test)
+                        likelihoods.append(likelihood)
+
+                # get the mean of the likelihoods
+                score_cvs_avg = np.mean(likelihoods)
+                heapq.heappush(scores, tuple([score_cvs_avg, model]))
+
+            except Exception as e:
+                #logging.exception('CV exception occurred:', e)
+                pass
+        
+        if not scores:
+            return None
+        return heapq.heappop(scores)[1]
