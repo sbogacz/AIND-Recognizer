@@ -1,5 +1,4 @@
 import warnings
-import heapq
 import logging
 from asl_data import SinglesData
 
@@ -24,18 +23,21 @@ def recognize(models: dict, test_set: SinglesData):
     guesses = []
     for idx in range(len(test_set.get_all_Xlengths())):
         test_X, test_length = test_set.get_item_Xlengths(idx)
-        guess = []
         test_word_probabilities = {}
-        heapq._heapify_max(guess)
+        best_guess = ""
+        best_score = float("-Inf")
         for word, model in models.items():
             try:
                 score = model.score(test_X, test_length)
                 test_word_probabilities[word] = score
-                heapq.heappush(guess, tuple([score, word]))
+                if score > best_score:
+                    best_guess, best_score = word, score
             except Exception as e:
-                logging.exception('recognizer exception: ', e)
+                #logging.exception('recognizer exception: ', e)
+                test_word_probabilities[word] = float("-Inf")
 
         probabilities.append(test_word_probabilities)
-        guesses.append(heapq.heappop(guess)[1])
+        guesses.append(best_guess)
+
 
     return probabilities, guesses

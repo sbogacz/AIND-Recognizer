@@ -81,25 +81,24 @@ class SelectorBIC(ModelSelector):
          d = number of data points
          from https://discussions.udacity.com/t/bayesian-information-criteria-equation/326887/3
         """
-        d = sum(self.lengths)
-        calculateNParams = lambda n: n ** 2 + 2 * n * d - 1
-        calculateBIC = lambda L, p: -2 * L + p * np.log(d)
-        scores = []
+        calculateNParams = lambda n, d: n ** 2 + 2 * n * d - 1
+        calculateBIC = lambda L, p, d: -2 * L + p * np.log(d)
+        best_score = (float("Inf"), None)
         for n in range(self.min_n_components, self.max_n_components + 1):
             try:
                 model = self.base_model(n)
                 L = model.score(self.X, self.lengths)
-                p = calculateNParams(n)
-                score = calculateBIC(L,p)
-                heapq.heappush(scores, tuple([score, model]))
+                d = model.n_features
+                p = calculateNParams(n, d)
+                score = calculateBIC(L, p, n)
+                if score < best_score[0]:
+                    best_score = (score, model)
             except:
                 # catch the exception for the illegal transitions
                 pass
-        if not scores:
-            return None
-        # pop from the min heap, and return only the model, not the score
-        return heapq.heappop(scores)[1]
-
+        if not best_score[1]:
+            return self.base_model(self.n_constant)
+        return best_score[1]
 
 class SelectorDIC(ModelSelector):
     ''' select best model based on Discriminative Information Criterion
@@ -128,19 +127,22 @@ class SelectorDIC(ModelSelector):
                 #logging.exception('DIC exception occurred:', e)
                 pass
 
-        scores = []
-        heapq._heapify_max(scores)
+        best_score = float("-Inf")
+        best_model = None
+        
         for score_model in base_scores:
             try:
                 orig_score, orig_model = score_model[0], score_model[1]
                 score = orig_score - np.mean(self.sum_scores(orig_model, all_but))     
-                heapq.heappush(scores, tuple([score, orig_model]))
+                if score > best_score:
+                    best_score, best_model = score, orig_model
+
             except Exception as e:
                 # logging.exception('DIC exception occurred:', e)
                 pass
-        if not scores:
-            return None
-        return heapq.heappop(scores)[1]
+        if not best_model:
+            return self.base_model(self.n_constant)
+        return best_model
 
 class SelectorCV(ModelSelector):
     ''' select best model based on average log Likelihood of cross-validation folds
@@ -152,8 +154,8 @@ class SelectorCV(ModelSelector):
                 
         kf = KFold(n_splits = 3, shuffle = False, random_state = None)
         likelihoods = []
-        scores = []
-        heapq._heapify_max(scores)
+        best_score = float("-Inf")
+        best_model = None
 
         for n_states in range(self.min_n_components, self.max_n_components + 1):
             try:        
@@ -175,13 +177,14 @@ class SelectorCV(ModelSelector):
                         likelihoods.append(likelihood)
 
                 # get the mean of the likelihoods
-                score_cvs_avg = np.mean(likelihoods)
-                heapq.heappush(scores, tuple([score_cvs_avg, model]))
+                score = np.mean(likelihoods)
+                if score > best_score:
+                    best_score, best_model = score, model 
 
             except Exception as e:
                 #logging.exception('CV exception occurred:', e)
                 pass
         
-        if not scores:
-            return None
-        return heapq.heappop(scores)[1]
+        if not best_model:
+            return self.base_model(self.n_constant)
+        return best_model
